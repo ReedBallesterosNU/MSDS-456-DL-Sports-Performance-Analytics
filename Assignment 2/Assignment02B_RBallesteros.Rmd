@@ -1,0 +1,535 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+\begin{titlepage}
+   \begin{center}
+       \vspace*{1cm}
+
+       \LARGE
+       \textbf{Sports Performance Analytics, Assignment 2}
+
+       \vspace{0.5cm}
+
+       \Large
+       \textbf{Option B: Team Construction and Player Types}
+
+       \vspace{1.5cm}
+
+       \vfill
+
+       \Large
+       \textbf{Reed Ballesteros}
+
+
+       \vspace{0.8cm}
+       
+       \normalsize
+       Northwestern University SPS, Winter 2023\\
+       MSDS-456-DL\\
+       Instructor: Prof. Bradley Smith\\
+       2023-03-12
+
+   \end{center}
+\end{titlepage}
+
+
+```{r setup, include=FALSE}
+# Pre-load libraries
+
+knitr::opts_chunk$set(echo = TRUE)
+library(fBasics)
+library(fpp2)
+library(tidyverse)
+library(lubridate)
+library(prophet)
+library(forecast)
+library(fBasics)
+library(ggplot2)
+
+
+library(magrittr)
+library(dplyr)
+library(tidyverse)
+library(caTools)
+
+library(nbastatR)
+
+library(caret)
+library(MASS)
+library(reshape2)
+library(cluster)
+
+library(factoextra)
+
+library(ggfortify)
+
+library(rlist)
+
+library(hrbrthemes)
+library(viridis)
+library(scatterplot3d)
+
+library(data.table)
+```
+
+
+(NOTE: We will be using the Los Angeles Lakers as the reference team for Assignment 2, Option B.)
+
+**1. Using the four-factor model discussed in Chapter 28 of Mathletics, determine where we ranked in the NBA last season and how we currently stack up so far this season. Briefly describe where we are deficient and where we excel.**
+
+According to Basketball-Reference.com (https://www.basketball-reference.com/teams/LAL/2022.html), the 2021-22 Los Angeles Lakers were ranked in the following in regard to the Four Factors:
+
+* Offensive Four Factors:
+  + eFG%: 15 (53.7%)
+  + TOV%: 23 (12.8%)
+  + ORB%: 25 (21.1%)
+  + FT/FGA: 19 (19.0%)
+
+* Defensive Four Factors:
+  + eFG%: 21 (54.0%)
+  + TOV%: 14 (12.2%)
+  + ORB%: 22 (75.8%)
+  + FT/FGA: 14 (19.2%)
+
+As of the morning of March 10, 2023, the 2022-23  Los Angeles Lakers were ranked in the following in regard to the Four Factors:
+
+* Offensive Four Factors:
+  + eFG%: 19, down 4 from 2021-22 (53.7%, same from 2021-22)
+  + TOV%: 9, up 14 from 2021-22 (12.2%, 0.6% improvement from 2021-22)
+  + ORB%: 24, up 1 from 2021-22 (22.1%, same from 2021-22)
+  + FT/FGA: 7, up 12 from 2021-22 (22.7%, 3.7% improvement from 2021-22)
+
+* Defensive Four Factors:
+  + eFG%: 9, up 15 from 2021-22 (53.5%, 0.5% improvement from 2021-22)
+  + TOV%: 29, down 15 from 2021-22 (10.9%, 1.3% decline from 2021-22)
+  + ORB%: 12, up 10 from 2021-22 (76.3%, 0.5% improvement from 2021-22)
+  + FT/FGA: 1, up 16 from 2021-22 (17.7%, 1.5% improvement from 2021-22)
+
+As the 2022-23 NBA regular season winds down, the Lakers has made some improvement from the 2021-22 season. As of this writing, the Lakers are tied at the same number of wins they collected last year, at 33-34 with 13 games left to go. They are currently at 9th place which puts them in the play-in tournament. They finished 11th in the Western Conference last season. They are up in most four factor categories with the exception of offensive eFG% where they dropped four places (15th to 19th) in the league (but have the same rate from last season), and defensive TOV%, dropping 6 places (23 to 29). One category of note is their improvement in defensive FT/FGA, going from 14th to 1st. While teams have more field goal attempts against the Lakers, they're not going to the line as often. Teams tend to shoot (and make) more 3s but the Lakers aggressiveness in the paint this season puts them on the line more often to make up for it. That being said, because of the Lakers poorer 3-point shooting compared to the rest of the league, they take the more difficult path of scoring by driving to the basket against tough defenses, and have to do it more often to make up for the scoring discrepancy since they rely more on 2-point field goals.
+
+**2. Looking at page 255 (Figure 28.4) in Mathletics, conduct a similar analysis that determines the relative importance of each of the four factors. Based on your findings, how many games should we have won last year?**
+
+Let's read in Los Angeles Lakers team stats from the 2021-22 and 2022-23 seasons based on the following from Basketball-Referenece.com (as of morning of March 10, 2023):
+
+* 2021-22: https://www.basketball-reference.com/teams/LAL/2022.html#all_team_and_opponent
+* 2022-23: https://www.basketball-reference.com/teams/LAL/2023.html#all_team_and_opponent
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+lakers_ff <- read.csv(file = 'lakers_four_factors.csv')
+lakers_ff
+```
+
+The projected games won formula in Mathletics Chapter 28 uses the following Four Factors formula based on the NBA 2015-16 season: 
+$$
+GamesWon = 59.05 +  383.31(EFG - OppEFG) - 244.36(TPP - OppTPP) + 34.49(ORP - DRP) + 84.27(FTR - OppFTR)
+$$
+
+Let's calculate the difference between team and opponent four factors.
+
+```{r}
+EFG <- (lakers_ff$FG + (0.5 * lakers_ff$X3P))/lakers_ff$FGA
+OppEFG <- (lakers_ff$OppFG + (0.5 * lakers_ff$Opp3P))/lakers_ff$OppFGA
+DiffEFG <- EFG - OppEFG
+
+TPP <- lakers_ff$TOV / (lakers_ff$FGA + (0.44 * lakers_ff$FTA) + lakers_ff$TOV)
+OppTPP <- lakers_ff$OppTOV / (lakers_ff$OppFGA + (0.44 * lakers_ff$OppFTA) + lakers_ff$OppTOV)
+DiffTPP <- TPP - OppTPP
+
+ORP <- lakers_ff$ORB / (lakers_ff$ORB + lakers_ff$OppDRB)
+DRP <- lakers_ff$DRB / (lakers_ff$OppORB + lakers_ff$DRB)
+DiffRP <- ORP - DRP
+
+FTR <- lakers_ff$FT / lakers_ff$FGA
+OppFTR <- lakers_ff$OppFT/lakers_ff$OppFGA
+DiffFTR <- FTR - OppFTR
+```
+
+Plugging in the values to the formula above:
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+games_won <- 59.05 + (383.31*(DiffEFG)) - (244.36*(DiffTPP)) + (34.49*(DiffRP)) + (84.27*(DiffFTR))
+games_won
+```
+
+Based on the Mathletics formula above and using the Four Factors, the Los Angeles Lakers were projected to win 37 games in the 2021-22 season, but won only 33 games (record was 33-49).
+
+As an alternative, we can build our own model using data scraped from the the NBA 2021-22 NBA Four Factors data page (https://www.nba.com/stats/teams/four-factors?Season=2021-22), with the team and opponent four factors differences already calculated (DIFF_EFG_PCT, DIFF_TOV_PCT, DIFF_REB_PCT, DIFF_FTA_RATE).
+
+```{r}
+four_factors_2021_22_df <- read.csv(file = 'four_factors_2021_22.csv')
+```
+
+The model summary is below.
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+model_four_factors_2021_22 <- lm(W ~ DIFF_EFG_PCT + DIFF_TOV_PCT + DIFF_REB_PCT + DIFF_FTA_RATE, 
+                                 data=four_factors_2021_22_df)
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+summary(model_four_factors_2021_22)
+```
+
+Based on the summary above we have the formula based on the Four Factors data from the 2021-22 season:
+$$
+GamesWon = 33.76 +  335.57(DiffEFG) - 224.92(DiffTOV) + 106.49(DiffREB) + 34.52(DiffFTA)
+$$
+
+Let's retrieve the 2021-22 Los Angeles Lakers Four Factors data from the scraped dataset:
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# Los Angeles Lakers team ID: 1610612747
+# get Lakers four factors data from four_factors_2021_22_df
+lakers_ff_2021_22_df <- four_factors_2021_22_df[four_factors_2021_22_df$TEAM_ID == 1610612747,]
+lakers_ff_2021_22_df
+```
+
+After plugging in the Lakers data into our Four Factors Model:
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# Feed 2021-22 Lakers four factors data into the model
+predictions <- predict(model_four_factors_2021_22, newdata=lakers_ff_2021_22_df)
+predictions
+```
+
+Based on the 2021-22 Four Factors data and the model we created above, the Los Angeles Lakers were projected to win 32 games in the 2021-22 season, but actually won one more game than predicted (record was 33-49).
+
+**3. Using historical data, determine a new classification framework for identifying player types. Provide a description of each player type based on the metrics that you select.**
+
+We will ingest the following 2022-23 NBA regular season player stats per game files scraped from NBA.com (as of morning of March 10, 2023):
+
+```{r}
+players_base_df <- read.csv(file = 'players_stats_base.csv')
+players_adv_df <- read.csv(file = 'players_stats_adv.csv')
+players_misc_df <- read.csv(file = 'players_stats_misc.csv')
+players_scoring_df <- read.csv(file = 'players_stats_scoring.csv')
+players_bio_df <- read.csv(file = 'players_bio.csv')
+```
+
+Let us determine subsets of player stats to consider from the dataframes above.
+
+```{r}
+base_subset <- c('PLAYER_ID',
+ 'PLAYER_NAME',
+ 'MIN',
+ 'FG_PCT',
+ 'FG3_PCT',
+ 'FT_PCT',
+ 'OREB',
+ 'DREB',
+ 'REB',
+ 'AST',
+ 'TOV',
+ 'STL',
+ 'BLK',
+ 'PTS',
+ 'PLUS_MINUS')
+
+advanced_subset <- c('OFF_RATING',
+ 'DEF_RATING',
+ 'NET_RATING',
+ 'OREB_PCT',
+ 'DREB_PCT',
+ 'EFG_PCT',
+ 'TS_PCT',
+ 'USG_PCT',
+ 'PACE',
+ 'PIE',
+ 'POSS')
+
+misc_subset <- c('PTS_OFF_TOV',
+'PTS_2ND_CHANCE',
+'PTS_FB',
+'PTS_PAINT')
+
+scoring_subset <- c('PCT_PTS_2PT_MR',
+'PCT_PTS_FB')
+```
+
+We will limit our player dataset to those averaging more than 24 minutes per game, and add bio information such as height (in inches) and weight.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+base_subset_df <- players_base_df[, base_subset]
+adv_subset_df <- players_adv_df[, advanced_subset]
+misc_subset_df <- players_misc_df[, misc_subset]
+scoring_subset_df <- players_scoring_df[, scoring_subset]
+
+# combine all subset df's into one df containing all columns
+players_df <- bind_cols(base_subset_df, adv_subset_df)
+players_df <- bind_cols(players_df, misc_subset_df)
+players_df <- bind_cols(players_df, scoring_subset_df)
+
+# get list of heights and weights for players in players_df from players_bio_df
+heights <- list()
+weights <- list()
+
+for (row in 1:nrow(players_df)) {
+  player_id <- players_df[row, "PLAYER_ID"]
+  bio_row <- players_bio_df[players_bio_df$PLAYER_ID == player_id,]
+  height <- bio_row$PLAYER_HEIGHT_INCHES
+  weight <- bio_row$PLAYER_WEIGHT
+
+  heights <- append(heights, height)
+  weights <- append(weights, weight)
+}
+
+# add height and weight to players_df
+players_df$PLAYER_HEIGHT_INCHES <- heights
+players_df$PLAYER_HEIGHT_INCHES <- as.numeric(as.character(players_df$PLAYER_HEIGHT_INCHES))
+
+players_df$PLAYER_WEIGHT <- weights
+players_df$PLAYER_WEIGHT <- as.numeric(as.character(players_df$PLAYER_WEIGHT))
+
+# filter by players averaging >= 24mpg
+players_24mpg_df <- players_df[players_df$MIN >= 24,]
+
+# reset index
+rownames(players_24mpg_df) <- NULL
+
+ids_names <- c('PLAYER_ID', 'PLAYER_NAME')
+
+ids_names_df <- players_24mpg_df[, ids_names]
+stats_df <- players_24mpg_df[, -c(1,2,3)] # remove ID, name, min for pure stat list for clustering
+```
+
+Let's get a correlation heatmap between the selected metrics.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+library(reshape2)
+ 
+# creating correlation matrix
+corr_mat <- round(cor(stats_df),2)
+ 
+# reduce the size of correlation matrix
+melted_corr_mat <- melt(corr_mat)
+# head(melted_corr_mat)
+ 
+# plotting the correlation heatmap
+library(ggplot2)
+ggplot(data = melted_corr_mat, aes(x=Var1, y=Var2,fill=value)) +
+  geom_tile() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  # scale_fill_viridis(discrete=FALSE)
+  scale_fill_gradient(low="blue", high="yellow")
+```
+
+We will perform Principal Component Analysis (PCA) to reduce the 31 metrics into a reduced feature set. The dataset is scaled before PCA is performed on it.
+
+```{r}
+pca <- prcomp(stats_df, scale = TRUE) # perform PCA on a dataframe with 31 features
+```
+
+To find out how many PCA components to reduce the dataset, we'll use the 'elbow' method looking at the proportion of variance for each PCA component generated.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+plot(summary(pca)$importance["Proportion of Variance", ], 
+     xlab = "Principal Component", ylab = "Proportion of Variance", type = "b")
+```
+
+The 'elbow method' suggests to use 4 components, but let's look at the numbers specifically.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+summary(pca)$importance
+```
+
+A rule of thumb for PCA is to get components up to where the cumulative proportion is at least greater than 80%. In the chart above, going up to component PC7 goes above the 80% threshold at 81%. Therefore, we will reduce the dataset to from 31 to 7 PCA components.
+
+We can view each PCA component to how much of an impact each of the 31 components have on them.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+loadings <- pca$rotation
+barplot(loadings[,1], las=2, cex.names=0.5, ylim=c(-0.6,0.8), main="PC1 - 31.5%")
+barplot(loadings[,2], las=2, cex.names=0.5, ylim=c(-0.6,0.8), main="PC2 - 21.2%")
+barplot(loadings[,3], las=2, cex.names=0.5, ylim=c(-0.6,0.8), main="PC3 - 10.7%")
+barplot(loadings[,4], las=2, cex.names=0.5, ylim=c(-0.6,0.8), main="PC4 - 5.3%")
+barplot(loadings[,5], las=2, cex.names=0.5, ylim=c(-0.6,0.8), main="PC5 - 4.9%")
+barplot(loadings[,6], las=2, cex.names=0.5, ylim=c(-0.6,0.8), main="PC6 - 4.1%")
+barplot(loadings[,7], las=2, cex.names=0.5, ylim=c(-0.6,0.8), main="PC7 - 3.7%")
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# extract the first 7 principal components as cumulative total > 0.8
+num_pca_components <- 7
+pc_data <- pca$x[, 1:num_pca_components]
+```
+
+With the reduced dataset, we will determine the optimal number of unsupervised clusters to create using Silhouette Analysis:
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# calculate silhouette widths for different numbers of clusters
+sil_width <- sapply(2:10, function(k){ 
+  km <- kmeans(pc_data, k)
+  ss <- silhouette(km$cluster, dist(pc_data))
+  mean(ss[,3])
+})
+
+ggplot(data.frame(k=2:10, Silhouette_Width=sil_width), aes(x=k, y=Silhouette_Width)) + 
+  geom_line() + 
+  geom_point(size=3) + 
+  labs(x="Number of Clusters", y="Silhouette Width") +
+  ggtitle("Silhouette Analysis to Find Optimal Number of Clusters - PC1 to PC7")
+```
+
+The results vary running Silhouette Analysis.
+
+We can also use perform within-cluster sum of squares (WCSS) analysis as another method to determine the number of clusters to use:
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# calculate within-cluster sum of squares for different numbers of clusters
+wcss <- sapply(1:8, function(k){kmeans(pc_data, k)$tot.withinss})
+
+# plot WCSS as a function of number of clusters
+ggplot(data.frame(k=1:8, WCSS=wcss), aes(x=k, y=WCSS)) + 
+  geom_line() + 
+  geom_point(size=3) + 
+  labs(x="Number of Clusters", y="Within-Cluster Sum of Squares") +
+  ggtitle("Elbow Method to Find Optimal Number of Clusters - PC1 to PC7")
+
+
+```
+
+The rule of thumb of WCSS is the lower, the better. In this case the lowest WCSS is at 8 clusters. We will use 6 clusters as its WCSS is just under 2000.
+
+Performing unsupervised clustering using 6 clusters:
+
+```{r}
+# clustering
+# perform K-means clustering on pc_data
+set.seed(123)
+k <- 6 # number of clusters
+kmeans_model <- kmeans(pc_data, k)
+cluster_labels <- kmeans_model$cluster
+```
+
+We will gather all the data together into a single dataframe, including Name, PCA components, and cluster.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+stats_cluster_df <- stats_df
+stats_cluster_df$PC1 <- pc_data[,1]
+stats_cluster_df$PC2 <- pc_data[,2]
+stats_cluster_df$PC3 <- pc_data[,3]
+stats_cluster_df$PC4 <- pc_data[,4]
+stats_cluster_df$PC5 <- pc_data[,5]
+stats_cluster_df$PC6 <- pc_data[,6]
+stats_cluster_df$PC7 <- pc_data[,7]
+stats_cluster_df$CLUSTER <- cluster_labels
+stats_cluster_df$PLAYER_NAME = ids_names_df$PLAYER_NAME
+stats_cluster_df$PLAYER_ID = ids_names_df$PLAYER_ID
+```
+
+Given that PC1, PC2, and PC3 together make up over 63% of the cumulative variance, let's make a 3D plot of them, marked by the 6 clusters.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+colors <- c("#ff0000", "#ffd700", "#0000ff", "#40e0d0","#00ff00","#c71585","#1e90ff")
+color_pal <- colors[as.numeric(stats_cluster_df$CLUSTER)]
+
+
+s3d <- scatterplot3d(stats_cluster_df[,c('PC1','PC2','PC3')], 
+                     angle=60, pch = 16, color=color_pal)
+
+legend(s3d$xyz.convert(7,0, 12), legend = 1:6,
+      col =  colors, 
+      pch = 16)
+```
+
+In the 3D plot above we can see the distinct groups of clusters. Let's see which players fall into each cluster.
+
+Cluster 1: Big Elite Dominator
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+cluster_1_df <- stats_cluster_df[stats_cluster_df$CLUSTER == 1,]
+cluster_1_df$PLAYER_NAME
+```
+
+With 16 players in Cluster 1 which is only about 9% of the datset, this seems to be a rare group. About 1 out of 2 teams have only one player in this group, with the exception of the Lakers, who have two players with Anthony Davis and LeBron James. All of these players have been selected to the NBA All-Star game at least once. This group also seem to be a taller group, and those that aren't as tall, such as Zion Williamson, Luka Doncic, LeBron, and Julius Randle, are explosive, dominating players in their own right. This is a very elite group.
+
+That being said, not every team needs to have someone in this class to be a playoff contender (such as the Golden State Warriors or the Los Angeles Clippers) if they are able to be very well-rounded in the other categories below, but it's definitely a nice-to-have.
+
+We will call this category "Big Elite Dominator."
+
+Cluster 2: Premier Offense
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+cluster_2_df <- stats_cluster_df[stats_cluster_df$CLUSTER == 2,]
+cluster_2_df$PLAYER_NAME
+```
+
+This group seems to contain much of the league's premier offensive and scoring threats, with the Splash Brothers of Curry and Thompson, scoring machines such as Damian Lillard, Donovan Mitchell, and Shai Gilgeous-Alexander, explosive playmakers like Ja Morant, Kyrie Irving, and Devin Booker, and always-dependable scorers such as Trae Young, Kawhi Leonard, Paul George, DeMar DeRozan, and Zach LaVine.
+
+This category is called "Premier Offense."
+
+Cluster 3: Defensive Powerhouse
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+cluster_3_df <- stats_cluster_df[stats_cluster_df$CLUSTER == 3,]
+cluster_3_df$PLAYER_NAME
+```
+
+Highlighted by players such as Rudy Gobert, Clint Capela, Aaron Gordon, and Deandre Ayton, we can say this group seems to be more defense-oriented, and their size makes their presence felt.
+
+We will make this the "Defensive Powerhouse" category.
+
+Cluster 4: Wing Supporter
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+cluster_4_df <- stats_cluster_df[stats_cluster_df$CLUSTER == 4,]
+cluster_4_df$PLAYER_NAME
+```
+
+Many of these players await around the wing, and when called upon can either slash in, take the mid-range jumper, or even step back to shoot the 3. They have many skills at their disposal once they get the ball.
+
+They are the "Wing Supporter."
+
+Cluster 5: Full-Court Hustler
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+cluster_5_df <- stats_cluster_df[stats_cluster_df$CLUSTER == 5,]
+cluster_5_df$PLAYER_NAME
+```
+
+Many of these players in this category are able to deliver both ends of the floor, often making the play that sparks that transition from a key defensive move to an explosive score. Draymond Green, and recently, Austin Reaves, show that end-to-end hustle.
+
+We'll call this the "Full-Court Hustler."
+
+Cluster 6: Reliable Role-Player
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+cluster_6_df <- stats_cluster_df[stats_cluster_df$CLUSTER == 6,]
+cluster_6_df$PLAYER_NAME
+```
+Former MVP Russell Westbrook, Jordan Poole, Gordon Haywood, and LaMelo Ball in this season, when healthy, are reliable on the court when called upon. Solid role-players.
+
+We will call this category "Reliable Role-Player."
+
+**4. Determine the types of players that currently make up our roster. Is there a particular type of player that we are lacking, or do we have multiple types of players that should be adjusted? What type of player(s) should we look to add this offseason either through free agency or the draft? Tie in your answers from 1 and 2 above.**
+
+As of the morning of March 12, 2023, the 2022-23 Lakers have the following in each class:
+
+* 1 (Big Elite Dominator): Anthony Davis, LeBron James
+* 2 (Premier Offense): D'Angelo Russell
+* 3 (Defensive Powerhouse): Jarred Vanderbilt
+* 4 (Wing Supporter): Dennis Schroder, Rui Hachimura, Malik Beasley
+* 5 (Full-Court Hustler): Austin Reaves
+* 6 (Reliable Role-Player): Lonnie Walker IV
+
+After the trading deadline, the Lakers have players in all categories in regard to players that average more than 24mpg.
+
+What's even more interesting is this was their lineup at the beginning of the season:
+
+* 1 (Big Elite Dominator): Anthony Davis, LeBron James
+* 2 (Premier Offense): (NONE)
+* 3 (Defensive Powerhouse): (NONE)
+* 4 (Wing Supporter): Dennis Schroder, Patrick Beverley
+* 5 (Full-Court Hustler): Austin Reaves
+* 6 (Reliable Role-Player): Lonnie Walker IV, Russell Westbrook
+
+The mid-season trades enabled the Lakers to fill in players in the categories they lacked. You can argue that even though they lacked in Category 2, the Lakers had two players in the rare Category 1, but both players had injuries that kept them out for a significant amount of time.
+
+The trade to fill out all categories has made a big difference. The Lakers are currently 8-3 with the new lineup and 33-34 overall (as of the morning of March 12, 2023). Despite an awful 2-10 start and injuries to AD and LeBron, the trade has put them in play-in tournament position and hope to finish strong towards the end of the regular season and be able to get into the playoffs. Filling in Category 3 with Jarred Vanderbilt has improved their defensive rating. Adding a premier scorer by re-acquiring D'Angelo Russell in Category 2 has given them the shooting range they desperately need. They fortified category 4 even more with more wing support from Rui Hachimura and Malik Beasley.
+
+Looking past this season, re-acquired D'Angelo Russell said after their March 10 win over the Raptors: "If we get one training camp under our belt, the sky's the limit." This lineup, if healthy, has the potential to improve even more with time and being able to gel together in next year's preseason. Lakers GM Rob Pelinka made the gutsy mid-season moves to fill in the scoring and defensive gaps it had based on these clusters. This could be a young solid lineup to support an aging superstar like LeBron James and reduce his overall load. Currently showing signs of promise, and as long as they can stay healthy, this Lakers team can  significantly improve on all Four Factors categories next season, as they've already been making improvements since the trade deadline.
+
+(Note: This writing is based as of the morning of March 12, 2023.)
